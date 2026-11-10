@@ -5,10 +5,11 @@ print(f"Привет, {name}!\n")              # f-строка: {name} подс
 
 tasks = ["Окружение", "Python", "Claude Code", "Субагенты", "Agent SDK"]   # список — как массив, но гибче
 
-for i=0, i<2, i++, task in enumerate(tasks, start=1):  # цикл по списку, без счётчика вручную
+# Вариант 2 — срез списка (так пишут в Python чаще всего)
+for i, task in enumerate(tasks[:1], start=1):   # tasks[:1] — первый элемент
     print(f"День {i}: {task}")
 
-if len(tasks) > 4:                         # отступы вместо фигурных скобок {}
+if len(tasks) > 10:                         # отступы вместо фигурных скобок {}
     print("\nПлан на неделю готов!")
 else:
     print("\nПлан на неделю слишком короткий.")
