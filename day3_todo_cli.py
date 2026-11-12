@@ -11,6 +11,7 @@ import sys                                 # модуль sys даёт дост�
 from pathlib import Path                   # Path — удобная работа с путями к файлам
 
 from rich.console import Console           # Console — «умный» print из библиотеки rich
+from rich.markup import escape             # escape «обезвреживает» [скобки], чтобы rich не принял их за оформление
 from rich.table import Table               # Table — таблица для красивого вывода
 
 from todo_utils import count_done          # берём готовую функцию подсчёта из нашего модуля
@@ -52,8 +53,9 @@ def show_list(todo: list[dict]) -> None:   # команда list
     table.add_column("Ответственный")      # колонка с ответственным
     for number, task in enumerate(todo, start=1):   # enumerate даёт номер и элемент; нумерация с 1, как у людей
         status = "✅" if task["done"] else "⬜"     # короткая запись if/else в одну строку
-        owner = task.get("owner", "-")              # .get вернёт "-", если поля owner нет
-        table.add_row(str(number), status, task["title"], owner)   # в таблицу rich передаём строки, поэтому str(number)
+        owner = escape(task.get("owner", "-"))      # .get вернёт "-", если поля owner нет; escape — показать текст как есть
+        title = escape(task["title"])               # текст задачи тоже показываем как есть, даже если в нём [bold]
+        table.add_row(str(number), status, title, owner)   # в таблицу rich передаём строки, поэтому str(number)
     console.print(table)                   # печатаем готовую таблицу
     console.print(f"Выполнено: {count_done(todo)} из {len(todo)}")   # используем count_done из todo_utils
 
@@ -66,7 +68,7 @@ def add_task(todo: list[dict], title: str) -> None:   # команда add
         sys.exit(1)                        # завершаем программу с кодом 1 — так принято сообщать об ошибке
     todo.append({"title": title, "done": False})   # добавляем новый словарь в конец списка
     save_todo(todo)                        # сразу сохраняем, иначе изменение потеряется
-    console.print(f"[green]Добавлена задача №{len(todo)}:[/green] {title}")   # номер новой задачи = длина списка
+    console.print(f"[green]Добавлена задача №{len(todo)}:[/green] {escape(title)}")   # номер новой задачи = длина списка; escape — текст как есть
 
 
 def mark_done(todo: list[dict], number_text: str) -> None:   # команда done
@@ -74,18 +76,19 @@ def mark_done(todo: list[dict], number_text: str) -> None:   # команда do
     try:                                   # пробуем превратить текст в число
         number = int(number_text)          # "2" → 2; "abc" вызовет ошибку ValueError
     except ValueError:                     # если не получилось — попадаем сюда, программа не падает
-        console.print(f"[red]'{number_text}' — это не номер. Укажите число, например: done 2[/red]")   # объясняем, что не так
+        console.print(f"[red]'{escape(number_text)}' — это не номер. Укажите число, например: done 2[/red]")   # объясняем, что не так; escape — текст как есть
         sys.exit(1)                        # выходим с кодом ошибки
     if number < 1 or number > len(todo):   # номера идут от 1 до количества задач
         console.print(f"[red]Задачи №{number} нет. Всего задач: {len(todo)}.[/red]")   # сообщаем, какие номера есть
         sys.exit(1)                        # выходим с кодом ошибки
     task = todo[number - 1]                # в списке счёт с 0, поэтому вычитаем 1
+    title = escape(task["title"])          # текст задачи для вывода — как есть, без оформления rich
     if task["done"]:                       # задача уже была выполнена
-        console.print(f"Задача №{number} «{task['title']}» уже выполнена.")   # просто сообщаем, ничего не меняем
+        console.print(f"Задача №{number} «{title}» уже выполнена.")   # просто сообщаем, ничего не меняем
         return                             # выходим из функции без сохранения
     task["done"] = True                    # меняем словарь прямо внутри списка
     save_todo(todo)                        # сохраняем изменение в файл
-    console.print(f"[green]Готово:[/green] задача №{number} «{task['title']}» выполнена.")   # подтверждаем
+    console.print(f"[green]Готово:[/green] задача №{number} «{title}» выполнена.")   # подтверждаем
 
 
 def main() -> None:                        # главная функция: разбирает команду и вызывает нужное действие
@@ -113,7 +116,7 @@ def main() -> None:                        # главная функция: ра
             sys.exit(1)                    # выходим с кодом ошибки
         mark_done(todo, args[1])           # передаём номер как текст — функция сама проверит его
     else:                                  # любая другая команда — неизвестная
-        console.print(f"[red]Неизвестная команда: {command}[/red]")   # сообщаем, что именно не так
+        console.print(f"[red]Неизвестная команда: {escape(command)}[/red]")   # сообщаем, что именно не так; escape — текст как есть
         console.print(USAGE)               # показываем подсказку
         sys.exit(1)                        # выходим с кодом ошибки
 
