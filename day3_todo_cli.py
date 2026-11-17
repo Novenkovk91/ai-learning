@@ -6,6 +6,7 @@
     python day3_todo_cli.py add "Текст" --due 25.11.2026 — добавить задачу со своим сроком
     python day3_todo_cli.py done 2                       — отметить задачу №2 выполненной
     python day3_todo_cli.py owner 2 Иван                 — назначить ответственного задаче №2
+    python day3_todo_cli.py urgent                       — показать самые срочные невыполненные задачи
 """
 
 import json                                # модуль для чтения и записи формата JSON
@@ -32,7 +33,8 @@ USAGE = """Команды:
   add "Текст"                  — добавить задачу (срок — через 7 дней)
   add "Текст" --due ДД.ММ.ГГГГ — добавить задачу со своим сроком
   done N                       — отметить задачу №N выполненной
-  owner N Имя                  — назначить ответственного задаче №N"""   # подсказка, которую покажем при неверной команде
+  owner N Имя                  — назначить ответственного задаче №N
+  urgent                       — показать самые срочные невыполненные задачи"""   # подсказка, которую покажем при неверной команде
 
 
 def load_todo() -> list[dict]:             # функция возвращает список задач-словарей
@@ -67,6 +69,14 @@ def format_due(task: dict) -> str:         # срок из файла → тек
         return date.fromisoformat(str(value)).strftime(SHOW_DATE_FORMAT)   # "2026-11-20" → дата → "20.11.2026"
     except ValueError:                     # не похоже на дату — показываем как есть, чтобы было видно, что в файле
         return escape(str(value))
+
+
+def due_date(task: dict) -> date | None:  # date | None — вернёт либо дату, либо None (как указатель, который может быть NULL)
+    """Возвращает срок задачи как дату или None, если срока нет или он испорчен."""
+    try:                                   # в файле могли записать не дату
+        return date.fromisoformat(str(task["end_date"]))   # "2026-11-20" → дата; если поля нет — будет KeyError
+    except (KeyError, ValueError):         # несколько видов ошибок можно поймать сразу, перечислив их в скобках
+        return None
 
 
 def split_due(words: list[str]) -> tuple[str, date]:   # разбирает слова после add
@@ -105,6 +115,49 @@ def show_list(todo: list[dict]) -> None:   # команда list
         table.add_row(str(number), status, title, owner, format_due(task))   # в таблицу rich передаём строки, поэтому str(number)
     console.print(table)                   # печатаем готовую таблицу
     console.print(f"Выполнено: {count_done(todo)} из {len(todo)}")   # используем count_done из todo_utils
+
+
+def show_urgent(todo: list[dict]) -> None:   # команда urgent; файл не меняет — save_todo здесь не вызывается
+    """Показывает все просроченные задачи, а если их нет — задачи с ближайшим сроком."""
+    today = date.today()
+    with_due = []                          # пары (срок, номер) невыполненных задач со сроком
+    without_due = []                       # номера невыполненных задач без срока или с испорченным сроком
+    for number, task in enumerate(todo, start=1):   # номер — как в list, чтобы потом сразу писать done N
+        if task["done"]:                   # выполненные задачи не срочные
+            continue                       # continue — сразу к следующей задаче, как в C
+        due = due_date(task)
+        if due is None:
+            without_due.append(number)
+        else:
+            with_due.append((due, number)) # (срок, номер) — кортеж: несколько значений в одной «упаковке»
+    if not with_due:                       # срочных задач нет: всё выполнено или ни у одной нет срока
+        console.print("Срочных задач нет")
+    else:
+        with_due.sort()                    # кортежи сортируются по первому элементу (срок), при равенстве — по номеру
+        overdue = [pair for pair in with_due if pair[0] < today]   # просроченные: срок раньше сегодняшнего дня
+        if overdue:                        # есть просроченные — показываем их все
+            chosen = overdue
+        else:                              # просроченных нет — все задачи с самым ранним сроком (список уже отсортирован)
+            earliest = with_due[0][0]
+            chosen = [pair for pair in with_due if pair[0] == earliest]
+        table = Table(title="Срочные задачи")
+        table.add_column("№")
+        table.add_column("Задача")
+        table.add_column("Статус")
+        table.add_column("Ответственный")
+        table.add_column("Срок")
+        for due, number in chosen:         # распаковка пары сразу в две переменные
+            task = todo[number - 1]        # в списке счёт с 0
+            title = escape(task["title"])
+            owner = escape(str(task.get("owner") or "-"))   # or "-" — если owner нет, пустой или null, показываем «-»
+            due_text = format_due(task)
+            if due < today:                # просрочено — помечаем красным прямо в колонке «Срок»
+                due_text = f"[red]{due_text} (просрочено)[/red]"
+            table.add_row(str(number), title, "⬜", owner, due_text)   # статус всегда ⬜ — здесь только невыполненные
+        console.print(table)
+    if without_due:                        # задачи без срока не сравнить по дате — просто перечисляем их номера
+        numbers = ", ".join(f"№{n}" for n in without_due)   # [1, 4] → "№1, №4"
+        console.print(f"Без срока: {numbers}")
 
 
 def add_task(todo: list[dict], title: str, due: date) -> None:   # команда add
@@ -200,6 +253,8 @@ def main() -> None:                        # главная функция: ра
             console.print("[red]Укажите номер задачи и имя: owner 2 Иван[/red]")   # подсказываем, как правильно
             sys.exit(1)                    # выходим с кодом ошибки
         set_owner(todo, args[1], " ".join(args[2:]))   # имя из нескольких слов склеиваем — «Иван Петров» без кавычек
+    elif command == "urgent":              # команда urgent
+        show_urgent(todo)                  # только показывает, ничего не сохраняет
     else:                                  # любая другая команда — неизвестная
         console.print(f"[red]Неизвестная команда: {escape(command)}[/red]")   # сообщаем, что именно не так; escape — текст как есть
         console.print(USAGE)               # показываем подсказку
