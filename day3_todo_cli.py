@@ -1,14 +1,16 @@
 """День 3: консольное приложение «список дел».
 
 Запуск:
-    python day3_todo_cli.py list          — показать все задачи
-    python day3_todo_cli.py add "Текст"   — добавить задачу
-    python day3_todo_cli.py done 2        — отметить задачу №2 выполненной
-    python day3_todo_cli.py owner 2 Иван  — назначить ответственного задаче №2
+    python day3_todo_cli.py list                         — показать все задачи
+    python day3_todo_cli.py add "Текст"                  — добавить задачу (срок — через 7 дней)
+    python day3_todo_cli.py add "Текст" --due 25.11.2026 — добавить задачу со своим сроком
+    python day3_todo_cli.py done 2                       — отметить задачу №2 выполненной
+    python day3_todo_cli.py owner 2 Иван                 — назначить ответственного задаче №2
 """
 
 import json                                # модуль для чтения и записи формата JSON
 import sys                                 # модуль sys даёт доступ к аргументам командной строки
+from datetime import date, datetime, timedelta   # date — дата без времени, datetime — дата со временем, timedelta — промежуток («7 дней»)
 from pathlib import Path                   # Path — удобная работа с путями к файлам
 
 from rich.console import Console           # Console — «умный» print из библиотеки rich
@@ -22,11 +24,15 @@ TODO_FILE = Path(__file__).parent / "todo.json"   # todo.json ищем рядо�
 
 console = Console()                        # один объект Console на всю программу — через него печатаем
 
+DEFAULT_DUE_DAYS = 7                       # срок по умолчанию: сегодня + 7 дней
+SHOW_DATE_FORMAT = "%d.%m.%Y"              # как дата выглядит на экране и при вводе: ДД.ММ.ГГГГ (коды как в strftime из C)
+
 USAGE = """Команды:
-  list          — показать все задачи
-  add "Текст"   — добавить задачу
-  done N        — отметить задачу №N выполненной
-  owner N Имя   — назначить ответственного задаче №N"""   # подсказка, которую покажем при неверной команде
+  list                         — показать все задачи
+  add "Текст"                  — добавить задачу (срок — через 7 дней)
+  add "Текст" --due ДД.ММ.ГГГГ — добавить задачу со своим сроком
+  done N                       — отметить задачу №N выполненной
+  owner N Имя                  — назначить ответственного задаче №N"""   # подсказка, которую покажем при неверной команде
 
 
 def load_todo() -> list[dict]:             # функция возвращает список задач-словарей
@@ -43,6 +49,44 @@ def save_todo(todo: list[dict]) -> None:   # None — функция ничег�
     TODO_FILE.write_text(text, encoding="utf-8")            # записываем строку в файл (старое содержимое заменяется)
 
 
+def parse_due(text: str) -> date:          # текст от пользователя → дата
+    """Превращает «ДД.ММ.ГГГГ» (можно и 5.1.2026) в дату. Если дата неверная — печатает ошибку и завершает программу."""
+    try:                                   # strptime выбросит ValueError, если текст не дата или такой даты нет (32.13.2026)
+        return datetime.strptime(text, SHOW_DATE_FORMAT).date()   # strptime разбирает текст по шаблону; .date() отбрасывает время
+    except ValueError:                     # не получилось — объясняем, как правильно
+        console.print(f"[red]'{escape(text)}' — неверная дата или такого дня нет. Нужен формат ДД.ММ.ГГГГ, например: --due 25.11.2026[/red]")
+        sys.exit(1)                        # выходим с кодом ошибки — задача не создаётся
+
+
+def format_due(task: dict) -> str:         # срок из файла → текст для экрана
+    """Возвращает срок задачи как ДД.ММ.ГГГГ или «-», если срока нет."""
+    value = task.get("end_date")           # в файле срок хранится как "2026-11-20"; у старых задач поля может не быть
+    if value is None:                      # срока нет
+        return "-"
+    try:                                   # в файле могли вручную записать что-то не то
+        return date.fromisoformat(str(value)).strftime(SHOW_DATE_FORMAT)   # "2026-11-20" → дата → "20.11.2026"
+    except ValueError:                     # не похоже на дату — показываем как есть, чтобы было видно, что в файле
+        return escape(str(value))
+
+
+def split_due(words: list[str]) -> tuple[str, date]:   # разбирает слова после add
+    """Отделяет «--due ДАТА» от текста задачи. Возвращает (текст, срок)."""
+    due = date.today() + timedelta(days=DEFAULT_DUE_DAYS)   # срок по умолчанию; дату можно складывать с промежутком
+    if "--due" in words:                   # in — есть ли такой элемент в списке (в C пришлось бы писать цикл)
+        index = words.index("--due")       # позиция слова --due в списке
+        if index + 1 >= len(words):        # после --due ничего нет
+            console.print("[red]После --due укажите дату, например: --due 25.11.2026[/red]")
+            sys.exit(1)                    # выходим с кодом ошибки
+        due = parse_due(words[index + 1])  # слово сразу после --due — это дата
+        words = words[:index] + words[index + 2:]   # срезы: всё до --due и всё после даты — это текст задачи
+    title = " ".join(words)                # склеиваем оставшиеся слова через пробел
+    if "-due" in title.lower():            # остался второй --due, --due=…, --DUE, -due — срок указан неточно
+        console.print("[red]Похоже, срок указан неверно (в тексте задачи осталось «-due»). "
+                      "Пишите отдельными словами, один раз: add \"Текст\" --due 25.11.2026[/red]")   # две строки подряд Python склеивает в одну, как в C
+        sys.exit(1)                        # выходим с кодом ошибки — задача не создаётся
+    return title, due
+
+
 def show_list(todo: list[dict]) -> None:   # команда list
     """Печатает задачи таблицей."""
     if not todo:                           # пустой список в Python считается «ложью»
@@ -53,24 +97,26 @@ def show_list(todo: list[dict]) -> None:   # команда list
     table.add_column("Статус")             # колонка со значком выполнено / нет
     table.add_column("Задача")             # колонка с текстом задачи
     table.add_column("Ответственный")      # колонка с ответственным
+    table.add_column("Срок")               # колонка со сроком выполнения
     for number, task in enumerate(todo, start=1):   # enumerate даёт номер и элемент; нумерация с 1, как у людей
         status = "✅" if task["done"] else "⬜"     # короткая запись if/else в одну строку
         owner = escape(task.get("owner", "-"))      # .get вернёт "-", если поля owner нет; escape — показать текст как есть
         title = escape(task["title"])               # текст задачи тоже показываем как есть, даже если в нём [bold]
-        table.add_row(str(number), status, title, owner)   # в таблицу rich передаём строки, поэтому str(number)
+        table.add_row(str(number), status, title, owner, format_due(task))   # в таблицу rich передаём строки, поэтому str(number)
     console.print(table)                   # печатаем готовую таблицу
     console.print(f"Выполнено: {count_done(todo)} из {len(todo)}")   # используем count_done из todo_utils
 
 
-def add_task(todo: list[dict], title: str) -> None:   # команда add
-    """Добавляет новую задачу и сохраняет файл."""
+def add_task(todo: list[dict], title: str, due: date) -> None:   # команда add
+    """Добавляет новую задачу со сроком due и сохраняет файл."""
     title = title.strip()                  # strip убирает пробелы по краям текста
     if not title:                          # пустая строка тоже считается «ложью»
         console.print("[red]Текст задачи пустой — нечего добавлять.[/red]")   # [red]...[/red] — красный цвет в rich
         sys.exit(1)                        # завершаем программу с кодом 1 — так принято сообщать об ошибке
-    todo.append({"title": title, "done": False})   # добавляем новый словарь в конец списка
+    task = {"title": title, "done": False, "end_date": due.isoformat()}   # isoformat() даёт "2026-11-24" — так храним в файле
+    todo.append(task)                      # добавляем новый словарь в конец списка
     save_todo(todo)                        # сразу сохраняем, иначе изменение потеряется
-    console.print(f"[green]Добавлена задача №{len(todo)}:[/green] {escape(title)}")   # номер новой задачи = длина списка; escape — текст как есть
+    console.print(f"[green]Добавлена задача №{len(todo)}:[/green] {escape(title)}, срок {format_due(task)}")   # номер новой задачи = длина списка; escape — текст как есть
 
 
 def get_task(todo: list[dict], number_text: str, example: str) -> tuple[int, dict]:   # общая проверка номера для done и owner
@@ -142,7 +188,8 @@ def main() -> None:                        # главная функция: ра
         if len(args) < 2:                  # после add нет текста
             console.print("[red]Укажите текст задачи: add \"Текст\"[/red]")   # подсказываем, как правильно
             sys.exit(1)                    # выходим с кодом ошибки
-        add_task(todo, " ".join(args[1:]))   # склеиваем слова через пробел — сработает даже без кавычек
+        title, due = split_due(args[1:])   # отделяем --due ДАТА от текста; слова склеиваются — сработает даже без кавычек
+        add_task(todo, title, due)         # добавляем задачу со сроком
     elif command == "done":                # команда done
         if len(args) < 2:                  # после done нет номера
             console.print("[red]Укажите номер задачи: done 2[/red]")   # подсказываем, как правильно
